@@ -7,8 +7,11 @@
 # USE_PREDEFINED_ASSETS: When True, the system tracks only the
 # tickers listed in PREDEFINED_ASSETS. Set to False to switch
 # to a dynamically-built universe (future implementation).
+# Overridable via env: USE_PREDEFINED_ASSETS=true|false
 #
-USE_PREDEFINED_ASSETS = True
+import os
+
+USE_PREDEFINED_ASSETS = os.getenv("USE_PREDEFINED_ASSETS", "true").lower() == "true"
 
 # Predefined asset list, grouped by volatility profile.
 # Each entry carries metadata that the analysis engine can use
@@ -81,7 +84,6 @@ for _asset in PREDEFINED_ASSETS:
 # ── Data Source API Keys ─────────────────────────────────────
 # Store actual keys in a .env file — never commit them.
 # Load with: from dotenv import load_dotenv; load_dotenv()
-import os
 
 ALPHA_VANTAGE_API_KEY  = os.getenv("ALPHA_VANTAGE_API_KEY",  "")
 FMP_API_KEY            = os.getenv("FMP_API_KEY",            "")
@@ -94,32 +96,34 @@ POLYGON_API_KEY        = os.getenv("POLYGON_API_KEY",        "")
 # Per-volatility RSI and signal sensitivity overrides.
 # These give the scoring engine room to treat a slow stock
 # differently from a high-volatility one.
+# Edit directly in this file — nested structure is not suitable for env vars.
 #
 VOLATILITY_THRESHOLDS = {
     "slow": {
-        "rsi_oversold":       35,
-        "rsi_overbought":     65,
-        "min_signal_score":   0.60,   # higher bar — fewer but cleaner signals
+        "rsi_oversold":       int(os.getenv("RSI_OVERSOLD_SLOW",   "35")),
+        "rsi_overbought":     int(os.getenv("RSI_OVERBOUGHT_SLOW",  "65")),
+        "min_signal_score": float(os.getenv("MIN_SIGNAL_SLOW",     "0.60")),
     },
     "medium": {
-        "rsi_oversold":       30,
-        "rsi_overbought":     70,
-        "min_signal_score":   0.55,
+        "rsi_oversold":       int(os.getenv("RSI_OVERSOLD_MEDIUM",  "30")),
+        "rsi_overbought":     int(os.getenv("RSI_OVERBOUGHT_MEDIUM", "70")),
+        "min_signal_score": float(os.getenv("MIN_SIGNAL_MEDIUM",   "0.55")),
     },
     "high": {
-        "rsi_oversold":       25,
-        "rsi_overbought":     75,
-        "min_signal_score":   0.50,   # lower bar — these move fast, act sooner
+        "rsi_oversold":       int(os.getenv("RSI_OVERSOLD_HIGH",   "25")),
+        "rsi_overbought":     int(os.getenv("RSI_OVERBOUGHT_HIGH",  "75")),
+        "min_signal_score": float(os.getenv("MIN_SIGNAL_HIGH",     "0.50")),
     },
 }
 
 
 # ── Scheduling ───────────────────────────────────────────────
 # How often (in minutes) each data-collection pillar runs.
+# Overridable individually via env vars.
 #
 FETCH_INTERVAL_MINUTES = {
-    "technical":    15,
-    "fundamental":  60 * 24,   # daily
-    "institutional": 60 * 24 * 7,  # weekly (13F cadence)
-    "sentiment":    30,
+    "technical":     int(os.getenv("FETCH_INTERVAL_TECHNICAL",     "15")),
+    "fundamental":   int(os.getenv("FETCH_INTERVAL_FUNDAMENTAL",   str(60 * 24))),
+    "institutional": int(os.getenv("FETCH_INTERVAL_INSTITUTIONAL", str(60 * 24 * 7))),
+    "sentiment":     int(os.getenv("FETCH_INTERVAL_SENTIMENT",     "30")),
 }
