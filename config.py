@@ -117,6 +117,29 @@ VOLATILITY_THRESHOLDS = {
 }
 
 
+# ── Stop-Loss Percentages ────────────────────────────────────
+# Maximum tolerated loss from entry before a position is closed
+# regardless of the signal. Tighter for slow, wider for high-vol.
+#
+STOP_LOSS_PCT = {
+    "slow":   float(os.getenv("STOP_LOSS_SLOW",   "0.05")),  # 5%
+    "medium": float(os.getenv("STOP_LOSS_MEDIUM", "0.08")),  # 8%
+    "high":   float(os.getenv("STOP_LOSS_HIGH",   "0.12")),  # 12%
+}
+
+
+# ── Signal Component Weights ─────────────────────────────────
+# Weights applied when combining multiple scoring pillars.
+# Weights are re-normalised at runtime so they do not have to
+# sum to 1 — but it is clearer if they do.
+# fundamental weight becomes non-zero once FMP_API_KEY is set.
+#
+COMPONENT_WEIGHTS = {
+    "technical":   float(os.getenv("WEIGHT_TECHNICAL",   "1.0")),
+    "fundamental": float(os.getenv("WEIGHT_FUNDAMENTAL", "0.0")),
+}
+
+
 # ── Scheduling ───────────────────────────────────────────────
 # How often (in minutes) each data-collection pillar runs.
 # Overridable individually via env vars.

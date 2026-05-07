@@ -1,13 +1,13 @@
 """
 Live monitor: fetches the latest quote for each ticker on a fixed interval,
-calculates indicators against stored history, scores the signal, and dispatches
-alerts via AlertManager.
+merges it into stored history, calculates indicators, scores, persists the
+signal to DB, and dispatches alerts via AlertManager.
 
 Data source priority:
-  1. Twelve Data  — preferred for live monitoring (800 credits/day free tier)
-  2. Alpha Vantage — fallback (25 req/day free tier; use wide intervals)
+  1. Twelve Data  — preferred (800 credits/day free tier)
+  2. Alpha Vantage — fallback (25 req/day; set interval wide enough)
 
-The monitor runs until Ctrl-C.
+The monitor blocks until Ctrl-C.
 """
 
 import logging
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import config
-from data_collection.data_store import get_ohlcv, init_db
+from data_collection.data_store import get_ohlcv, init_db, save_signal
 from data_collection.indicators import calculate_all
 from monitoring.alerter import Alert, AlertManager
 from scoring.signal_scorer import score_latest
@@ -30,16 +30,22 @@ log = logging.getLogger(__name__)
 
 class LiveMonitor:
 
-    def __init__(self, tickers: list[str] = None, interval_minutes: int = None):
-        self.tickers  = tickers or [a["ticker"] for a in config.PREDEFINED_ASSETS]
-        self.interval = interval_minutes or config.FETCH_INTERVAL_MINUTES["technical"]
-        self.alerts   = AlertManager()
-        self._client  = None
+    def __init__(
+        self,
+        tickers: list[str] = None,
+        interval_minutes: int = None,
+        alerts_only: bool = False,
+    ):
+        self.tickers      = tickers or [a["ticker"] for a in config.PREDEFINED_ASSETS]
+        self.interval     = interval_minutes or config.FETCH_INTERVAL_MINUTES["technical"]
+        self.alerts_only  = alerts_only   # suppress HOLD console output when True
+        self.alert_mgr    = AlertManager()
+        self._client      = None
 
     # ── Public ───────────────────────────────────────────────────────────────
 
     def run(self):
-        """Block until interrupted. Runs the first tick immediately."""
+        """Block until interrupted. Fires the first tick immediately."""
         init_db()
         scheduler = BlockingScheduler(timezone="UTC")
         scheduler.add_job(
@@ -47,13 +53,13 @@ class LiveMonitor:
             trigger="interval",
             minutes=self.interval,
             id="monitor",
-            next_run_time=datetime.utcnow(),  # fire immediately on start
+            next_run_time=datetime.utcnow(),
         )
         log.info(
-            "Live monitor started | tickers=%s | interval=%dm",
-            self.tickers, self.interval,
+            "Live monitor started | tickers=%s | interval=%dm | alerts-only=%s",
+            self.tickers, self.interval, self.alerts_only,
         )
-        _print_rate_limit_hint(self.interval, len(self.tickers))
+        _print_rate_hint(self.interval, len(self.tickers))
         try:
             scheduler.start()
         except (KeyboardInterrupt, SystemExit):
@@ -79,7 +85,7 @@ class LiveMonitor:
 
         quote = client.fetch_quote(ticker)
 
-        # Merge live quote as today's row (update if date already exists)
+        # Merge live quote as today's bar (update if date already stored)
         today = pd.Timestamp(quote["date"])
         live_row = pd.DataFrame(
             [{
@@ -105,7 +111,29 @@ class LiveMonitor:
             return
 
         result = score_latest(ticker, df)
-        self.alerts.send(Alert(
+
+        # Persist signal to DB
+        try:
+            save_signal(
+                ticker=ticker,
+                date=quote["date"],
+                action=result.action,
+                norm_score=result.norm_score,
+                raw_score=result.raw_score,
+                price=result.price,
+                rsi=result.rsi,
+                macd=result.macd,
+                sma50=result.sma50,
+                sma200=result.sma200,
+            )
+        except Exception as exc:
+            log.warning("%s: could not save signal: %s", ticker, exc)
+
+        # Dispatch alert (suppress HOLD when alerts_only is set)
+        if self.alerts_only and result.action == "HOLD":
+            return
+
+        self.alert_mgr.send(Alert(
             ticker=ticker,
             action=result.action,
             price=result.price,
@@ -135,12 +163,13 @@ class LiveMonitor:
         return self._client
 
 
-def _print_rate_limit_hint(interval_min: int, num_tickers: int):
-    req_per_day = (24 * 60 // interval_min) * num_tickers
+def _print_rate_hint(interval_min: int, num_tickers: int):
+    cycles    = 24 * 60 // interval_min
+    req_day   = cycles * num_tickers
+    td_ok     = req_day <= 800
+    av_ok     = req_day <= 25
     print(
-        f"\n  Rate estimate: {num_tickers} tickers × {24*60//interval_min} cycles/day "
-        f"= ~{req_per_day} requests/day\n"
-        f"  Alpha Vantage free: 25/day → min interval {num_tickers * 60} min\n"
-        f"  Twelve Data free:  800/day → interval {interval_min}m is "
-        f"{'OK' if req_per_day <= 800 else 'OVER LIMIT — increase --interval'}\n"
+        f"\n  Rate estimate : {num_tickers} tickers × {cycles} cycles/day = ~{req_day} req/day\n"
+        f"  Twelve Data   : 800/day free  → {'OK ✓' if td_ok  else f'OVER — raise --interval to >={num_tickers * 24 * 60 // 800 + 1}m'}\n"
+        f"  Alpha Vantage : 25/day free   → {'OK ✓' if av_ok  else f'OVER — raise --interval to >={num_tickers * 24 * 60 // 25 + 1}m'}\n"
     )
